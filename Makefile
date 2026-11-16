@@ -1,5 +1,9 @@
 .PHONY: install run debug sandbox clean fclean lint lint-strict test
 
+UV ?= uv
+TEST_PYTHON ?= 3.10
+TEST_ARGS ?=
+
 install:
 	uv sync
 
@@ -32,4 +36,6 @@ lint-strict:
 	uv run mypy --exclude .venv --exclude models.py --strict .
 
 test:
-	uv run pytest -v
+	$(UV) run --no-project --python $(TEST_PYTHON) \
+		--with-requirements requirements-test.txt \
+		python -m pytest tests -v $(TEST_ARGS)

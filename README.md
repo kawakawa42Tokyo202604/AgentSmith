@@ -1,115 +1,59 @@
-
 # Agent Smith
 
-## Description
+## English
 
-LLM-driven **Code Agent**: reasons, writes Python, runs it in a sandboxed
-MCP-tool environment, loops until `final_answer(...)`. Supports **MBPP**
-(short problems, `run_tests`) and **SWE-bench** (Docker repo fixes,
-submitted as a `git diff`).
+A coding agent that asks a language model to write Python, executes it in an isolated sandbox, and uses the result to decide the next step. It supports short MBPP problems and repository fixes for SWE-bench.
 
-## Instructions
+### Layout
+
+| Path | Contents |
+| --- | --- |
+| `agent_mbpp.py / agent_swebench.py` | Task input and result output |
+| `orchestrator.py` | Reasoning and execution loop |
+| `sandbox/` | Process isolation and MCP tool connections |
+| `llm/` | Providers, retries, and key rotation |
+| `tests/` | Tools, isolation, error handling, and shutdown |
+
+### Run and test
+
+Requires Python 3.10, uv, Make, and Linux with unshare and bwrap. Run from the repository root.
 
 ```sh
-uv sync && cp .env.example .env   # fill in free-tier API keys
-uv run sandbox                    # interactive REPL
-uv run python -m agent_mbpp     --task-file cache/mbpp_task.json --output cache/mbpp_solution.json --model-name "qwen/qwen3.8-27b" --provider-url "https://api.groq.com/openai/v1"
-uv run python -m agent_swebench --task-file cache/swebench_task.json --output cache/swebench_solution.json --model-name "minimax/minimax-m3:free" --provider-url "https://openrouter.ai/api/v1"
-make test   # pytest, no network/keys needed
+make test
+make install
+make run
+make sandbox
 ```
 
-Needs Linux `unshare`+`bubblewrap`; missing them fails the sandbox closed,
-never falls back to an in-process runner. Task files come from moulinette
-(`moulinette_eval dump mbpp/swebench`). `solution.json` is always written,
-even on failure.
+`make test` prepares a cached environment and runs 103 tests. Provider and Docker calls use test doubles; sandbox tests execute real isolated worker processes. No API key or running Docker daemon is needed for these tests. Real agent runs need provider credentials; SWE-bench also needs Docker. Configure `.env` locally using `.env.example`. See [BENCHMARK_REPORT.md](BENCHMARK_REPORT.md) for existing model comparisons.
 
-## System architecture
+See [the detailed guide](docs/GUIDE.md) for the original setup and implementation notes.
 
+## 日本語
+
+言語モデルにPythonを書かせ、隔離したサンドボックスで実行し、その結果から次の操作を決める開発支援エージェントです。短いMBPP問題と、リポジトリ修正を行うSWE-benchに対応しています。
+
+### 構成
+
+| パス | 内容 |
+| --- | --- |
+| `agent_mbpp.py / agent_swebench.py` | 課題の読込と結果出力 |
+| `orchestrator.py` | 推論と実行を繰り返す処理 |
+| `sandbox/` | プロセス隔離とMCPツール接続 |
+| `llm/` | プロバイダ・再試行・APIキー切替 |
+| `tests/` | ツール・隔離・エラー処理・終了処理の検証 |
+
+### 実行とテスト
+
+Python 3.10・uv・Makeと、unshare・bwrapを利用できるLinux環境が必要です。 リポジトリ直下で実行します。
+
+```sh
+make test
+make install
+make run
+make sandbox
 ```
-LLM API <-> Orchestrator -> code_extraction -> Sandbox -> MCPToolProxy -> mcp_tools_*.py
-```
 
-`orchestrator.py` runs the loop; `code_extraction.py` normalizes tool-call
-formats (XML/JSON/ReAct → Python); `sandbox/` is the execution boundary;
-`llm/` abstracts providers with key rotation/fallback; `agent_mbpp.py` /
-`agent_swebench.py` are the CLIs that write `solution.json`.
+`make test` はキャッシュ上に環境を用意して103テストを実行します。API呼出しとDocker操作には代替実装を使い、サンドボックスは実際の隔離ワーカープロセスで検証します。このテストにAPIキーや起動中のDockerは不要です。実際のエージェント実行には認証情報、SWE-benchにはDockerも必要です。`.env.example`を基にローカルで設定します。既存のモデル比較は[BENCHMARK_REPORT.md](BENCHMARK_REPORT.md)にあります。
 
-## Agent loop explanation
-
-1. Send the conversation to the LLM (`<end_code>` stop sequence).
-2. Extract code; no block found → `[NoCodeBlock]` fed back honestly.
-3. Run in `Sandbox.run()`; `final_answer()` ends the loop, anything else
-   becomes the next Observation.
-4. Log a `StepMetrics` entry, repeat until done or a limit is hit.
-
-## Sandbox design
-
-`sandbox/executor.py` runs code in a network-disabled `unshare`+`bubblewrap`
-worker: AST + runtime import allowlist, path-checked `open`, wall-clock and
-`RLIMIT_AS` limits, restricted builtins, and a default-deny dunder-attribute
-allowlist blocking escapes like `().__class__.__bases__` walks. `final_answer()`
-is an injected closure never caught by the generic handler. `SandboxConfig`
-(`models.py`) loads from JSON (`sandbox_template.json`); `sandbox/cli.py` is
-the interactive REPL.
-
-## Tool implementation details
-
-- **MCP** (`sandbox/mcp_client.py`): tools discovered via `list_tools()`,
-  never hardcoded; stdio and streamable HTTP both supported.
-- **MBPP**: `run_tests(code, test_list)` → `{"success": bool, "output": str}`.
-- **SWE-bench**: all 9 mandatory tools, rooted at `TESTBED_PATH`; `get_patch`
-  uses `git -c core.fileMode=false diff`.
-- **Docker** (`docker_runner.py`): only the MCP tool server runs inside the
-  container; the sandbox itself stays on the host.
-
-## Benchmark results and analysis
-
-See `BENCHMARK_REPORT.md`: 5 models × 3 providers on 3 SWE-bench tasks, 3
-independently-verified passes, plus an ablation study.
-
-## Resources
-
-#### Classic references (Japanese-language sources)
-- MCP overview — 「MCPとは？AIエージェント時代の標準規格を徹底解説」(NTT東日本) — https://business.ntt-east.co.jp/content/cloudsolution/ih_column-193.html
-- MBPP / HumanEval overview — 「LLM評価指標、HumanEvalとMBPPとは？」(note) — https://note.com/fukudawataru/n/n745412f5659d
-- SWE-bench, official Japanese translation — https://github.com/SWE-bench/SWE-bench/blob/main/docs/other_languages/README_JP.md
-- ReAct — 「意思決定を行うためのprompt技術 ReAct」(Zenn) — https://zenn.dev/jow/articles/927395f5dbe694
-- CodeAct — 「Microsoft Agent Framework CodeAct入門」(Qiita) — https://qiita.com/kai_kou/items/7c2a23e6aa05e860f99c
-- Python `signal`/`resource`/`ast` 公式ドキュメント(日本語) — https://docs.python.org/ja/3/library/signal.html
-
-#### How AI was used in this project
-AI coding assistants helped with code generation, debugging, and
-documentation drafting, under our direction and review. Claude Code was also
-given this prompt to add line-by-line Japanese comments across the codebase:
-「全ファイルのコードに一行一行わかりやすい解説コメントアウトをつけて.pythonを知らない人でもわかるように詳しく」
-("Add an easy-to-understand explanatory comment to every line of code in
-every file.")
-
----
-
-## 日本語セクション（要約）
-
-**Agent Smith** は、LLM自身が思考しPythonコードを書き、それをサンドボックス内で
-実行し、結果を観察して次の一手を決める、というループ(Thought → Code →
-Observation)を回して課題を解く自律エージェントです。MBPP(短いアルゴリズム問題)
-とSWE-bench(実リポジトリのバグ修正、Dockerコンテナ内で実行)の両方に対応します。
-
-- **使い方**: `uv sync` で依存関係を入れ、`.env` にAPIキーを設定。
-  `uv run sandbox` で対話型サンドボックスを試せます。
-- **アーキテクチャ**: Orchestrator(`orchestrator.py`)がLLM呼び出し→コード抽出
-  →サンドボックス実行→観察結果のフィードバックを繰り返します。ツール呼び出しの
-  フォーマット違い(XML/JSON/ReAct等)は`code_extraction.py`が吸収し、サンドボッ
-  クスは常にPython関数呼び出しだけを見ます。
-- **サンドボックス**: `unshare`+`bubblewrap`によるOS隔離、importの許可リスト、
-  ファイルアクセス制限、タイムアウト/メモリ上限に加え、Pythonの内部オブジェクト
-  を辿って制限を回避する典型的な「サンドボックス脱出」(`().__class__.__bases__`
-  経由)を防ぐdunder属性の許可リストを実装しています。
-- **ツール**: MCP(Model Context Protocol)経由でファイル読み書き・コード検索・
-  テスト実行などのツールを動的に発見して呼び出します。SWE-bench用は9個の必須
-  ツールを実装。
-- **ベンチマーク結果**: 詳細は`BENCHMARK_REPORT.md`を参照(5モデル×3プロバイダ
-  ×3タスクで比較し、3件を実際に検証済み)。
-- **AIの利用について**: 開発中はAIコーディングアシスタントをコード生成・デバッ
-  グ・ドキュメント作成の補助に使い、内容は自分たちで確認・レビューしました。
-  また、Claude Codeに「全ファイルのコードに一行一行わかりやすい解説コメントアウト
-  をつけて.pythonを知らない人でもわかるように詳しく」と指示し、コードベース全体に日本語コメントを追加しました。
+元の構築手順と設計の説明は[詳細ガイド](docs/GUIDE.md)にまとめています。

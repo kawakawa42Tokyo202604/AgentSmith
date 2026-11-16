@@ -1,0 +1,6 @@
+pytest>=8
+pydantic>=2
+python-dotenv>=1
+requests>=2.31
+docker>=7.1
+mcp>=1.2,<2
